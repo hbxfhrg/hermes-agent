@@ -90,6 +90,16 @@ def _get_scope_lock_path(scope: str, identity: str) -> Path:
 
 def _get_process_start_time(pid: int) -> Optional[int]:
     """Return the kernel start time for a process when available."""
+    if _IS_WINDOWS:
+        try:
+            import psutil
+            return int(psutil.Process(pid).create_time())
+        except ImportError:
+            # psutil not installed, return None
+            return None
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return None
+    
     stat_path = Path(f"/proc/{pid}/stat")
     try:
         # Field 22 in /proc/<pid>/stat is process start time (clock ticks).
@@ -100,6 +110,16 @@ def _get_process_start_time(pid: int) -> Optional[int]:
 
 def _read_process_cmdline(pid: int) -> Optional[str]:
     """Return the process command line as a space-separated string."""
+    if _IS_WINDOWS:
+        try:
+            import psutil
+            return " ".join(psutil.Process(pid).cmdline())
+        except ImportError:
+            # psutil not installed, return None
+            return None
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return None
+    
     cmdline_path = Path(f"/proc/{pid}/cmdline")
     try:
         raw = cmdline_path.read_bytes()
@@ -109,6 +129,46 @@ def _read_process_cmdline(pid: int) -> Optional[str]:
     if not raw:
         return None
     return raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore").strip()
+
+
+def _is_process_running(pid: int) -> bool:
+    """Check if a process with the given PID is running."""
+    if _IS_WINDOWS:
+        try:
+            import psutil
+            try:
+                psutil.Process(pid).status()
+                return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                # Try using tasklist as fallback
+                try:
+                    result = subprocess.run(
+                        ["tasklist", "/FI", f"PID eq {pid}"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    return f"PID: {pid}" in result.stdout
+                except (subprocess.SubprocessError, FileNotFoundError):
+                    return False
+        except ImportError:
+            # psutil not installed, try tasklist directly
+            try:
+                result = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {pid}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                return f"PID: {pid}" in result.stdout
+            except (subprocess.SubprocessError, FileNotFoundError):
+                return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except (ProcessLookupError, PermissionError):
+            return False
 
 
 def _looks_like_gateway_process(pid: int) -> bool:
@@ -327,9 +387,7 @@ def acquire_scoped_lock(scope: str, identity: str, metadata: Optional[dict[str, 
 
         stale = existing_pid is None
         if not stale:
-            try:
-                os.kill(existing_pid, 0)
-            except (ProcessLookupError, PermissionError):
+            if not _is_process_running(existing_pid):
                 stale = True
             else:
                 current_start = _get_process_start_time(existing_pid)
@@ -342,7 +400,7 @@ def acquire_scoped_lock(scope: str, identity: str, metadata: Optional[dict[str, 
                 # Check if process is stopped (Ctrl+Z / SIGTSTP) — stopped
                 # processes still respond to os.kill(pid, 0) but are not
                 # actually running. Treat them as stale so --replace works.
-                if not stale:
+                if not stale and not _IS_WINDOWS:
                     try:
                         _proc_status = Path(f"/proc/{existing_pid}/status")
                         if _proc_status.exists():
@@ -430,9 +488,7 @@ def get_running_pid() -> Optional[int]:
         remove_pid_file()
         return None
 
-    try:
-        os.kill(pid, 0)  # signal 0 = existence check, no actual signal sent
-    except (ProcessLookupError, PermissionError):
+    if not _is_process_running(pid):
         remove_pid_file()
         return None
 
