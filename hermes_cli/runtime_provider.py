@@ -373,6 +373,44 @@ def _resolve_named_custom_runtime(
 ) -> Optional[Dict[str, Any]]:
     custom_provider = _get_named_custom_provider(requested_provider)
     if not custom_provider:
+        # Handle the case when requested_provider is "custom" but no named custom provider is found
+        # This allows using config.yaml's model.base_url and model.provider=custom
+        requested_norm = _normalize_custom_provider_name(requested_provider or "")
+        if requested_norm == "custom":
+            model_cfg = _get_model_config()
+            base_url = (model_cfg.get("base_url") or "").strip().rstrip("/")
+            if base_url:
+                # Check if a credential pool exists for this custom endpoint
+                pool_result = _try_resolve_from_custom_pool(base_url, "custom", model_cfg.get("api_mode"))
+                if pool_result:
+                    # Propagate the model name even when using pooled credentials
+                    model_name = model_cfg.get("default")
+                    if model_name:
+                        pool_result["model"] = model_name
+                    return pool_result
+                
+                # Create a custom runtime from model config
+                api_key_candidates = [
+                    (explicit_api_key or "").strip(),
+                    str(model_cfg.get("api_key", "") or "").strip(),
+                    os.getenv("OPENAI_API_KEY", "").strip(),
+                    os.getenv("OPENROUTER_API_KEY", "").strip(),
+                ]
+                api_key = next((candidate for candidate in api_key_candidates if has_usable_secret(candidate)), "")
+                
+                result = {
+                    "provider": "custom",
+                    "api_mode": model_cfg.get("api_mode")
+                    or _detect_api_mode_for_url(base_url)
+                    or "chat_completions",
+                    "base_url": base_url,
+                    "api_key": api_key or "no-key-required",
+                    "source": "config.yaml:model",
+                }
+                # Propagate the model name
+                if model_cfg.get("default"):
+                    result["model"] = model_cfg["default"]
+                return result
         return None
 
     base_url = (

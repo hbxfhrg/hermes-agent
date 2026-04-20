@@ -1022,9 +1022,9 @@ def _get_provider_chain() -> List[tuple]:
     on the ``_try_*`` functions are picked up correctly.
     """
     return [
+        ("local/custom", _try_custom_endpoint),
         ("openrouter", _try_openrouter),
         ("nous", _try_nous),
-        ("local/custom", _try_custom_endpoint),
         ("openai-codex", _try_codex),
         ("api-key", _resolve_api_key_provider),
     ]

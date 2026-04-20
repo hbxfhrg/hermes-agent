@@ -1,8 +1,8 @@
 model:
-  default: openrouter/elephant-alpha
-  provider: openrouter
-  base_url: https://openrouter.ai/api/v1
-  api_mode: chat_completions
+  default: qwen3.5:4b
+  provider: custom
+  base_url: http://localhost:11434/v1
+  api_key: dummy
 providers: {}
 fallback_providers: []
 credential_pool_strategies: {}
@@ -214,6 +214,11 @@ logging:
 network:
   force_ipv4: false
 _config_version: 17
+custom_providers:
+- name: "\u672C\u673A"
+  base_url: http://localhost:11434/v1
+  api_key: dummy
+  model: qwen3.5:4b
 
 # ── Fallback Model ────────────────────────────────────────────────────
 # Automatic provider failover when primary is unavailable.
